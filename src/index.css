@@ -1,0 +1,139 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --base-blue: #0052FF;
+  --base-blue-light: #2563EB;
+  --base-dark: #0A0B0D;
+  --base-card: #111318;
+  --base-card-hover: #161920;
+  --base-border: #1E2128;
+  --base-border-light: #2A2F3A;
+  --base-muted: #6B7280;
+  --base-text: #F9FAFB;
+  --base-subtext: #9CA3AF;
+  --base-green: #10B981;
+  --base-yellow: #F59E0B;
+  --base-red: #EF4444;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--base-dark);
+  color: var(--base-text);
+  font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--base-dark); }
+::-webkit-scrollbar-thumb { background: var(--base-border-light); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--base-muted); }
+
+/* OnchainKit overrides */
+.ock-connect-button {
+  background: var(--base-blue) !important;
+  border-radius: 8px !important;
+  font-family: 'Space Grotesk', sans-serif !important;
+  font-weight: 600 !important;
+}
+
+/* Animations */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--base-card) 25%, var(--base-border) 50%, var(--base-card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.4s ease forwards;
+}
+
+/* Status badges */
+.status-open { background: rgba(16,185,129,0.15); color: #10B981; border: 1px solid rgba(16,185,129,0.3); }
+.status-assigned { background: rgba(245,158,11,0.15); color: #F59E0B; border: 1px solid rgba(245,158,11,0.3); }
+.status-submitted { background: rgba(0,82,255,0.15); color: #60A5FA; border: 1px solid rgba(0,82,255,0.3); }
+.status-completed { background: rgba(16,185,129,0.1); color: #6EE7B7; border: 1px solid rgba(16,185,129,0.2); }
+.status-disputed { background: rgba(239,68,68,0.15); color: #EF4444; border: 1px solid rgba(239,68,68,0.3); }
+.status-cancelled { background: rgba(107,114,128,0.15); color: #6B7280; border: 1px solid rgba(107,114,128,0.3); }
+
+/* Card hover */
+.card-hover {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.card-hover:hover {
+  border-color: var(--base-blue) !important;
+  box-shadow: 0 0 0 1px rgba(0,82,255,0.2), 0 8px 24px rgba(0,0,0,0.3);
+  transform: translateY(-1px);
+}
+
+/* Input styles */
+.input-base {
+  background: var(--base-dark);
+  border: 1px solid var(--base-border);
+  border-radius: 8px;
+  color: var(--base-text);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  padding: 10px 14px;
+  width: 100%;
+  transition: border-color 0.2s ease;
+  outline: none;
+}
+.input-base:focus { border-color: var(--base-blue); }
+.input-base::placeholder { color: var(--base-muted); }
+
+/* Button styles */
+.btn-primary {
+  background: var(--base-blue);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+.btn-primary:hover { background: #0047E0; }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { background: var(--base-border); color: var(--base-muted); cursor: not-allowed; }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--base-text);
+  border: 1px solid var(--base-border);
+  border-radius: 8px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.btn-secondary:hover { border-color: var(--base-blue); background: rgba(0,82,255,0.06); }
