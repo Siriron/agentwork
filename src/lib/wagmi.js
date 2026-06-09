@@ -1,27 +1,30 @@
 import { http, createConfig } from 'wagmi'
 import { base } from 'wagmi/chains'
-import { coinbaseWallet, metaMask, walletConnect } from 'wagmi/connectors'
+import { injected, coinbaseWallet, walletConnect } from 'wagmi/connectors'
 
-// Replace with your Coinbase Developer Platform API key
-// Get one free at: https://portal.cdp.coinbase.com/
-export const CDP_API_KEY = import.meta.env.VITE_CDP_API_KEY || 'your-cdp-api-key'
-
-// WalletConnect project ID — get free at https://cloud.walletconnect.com/
-export const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || 'your-wc-project-id'
+export const CDP_API_KEY = import.meta.env.VITE_CDP_API_KEY || ''
+export const WC_PROJECT_ID = import.meta.env.VITE_WC_PROJECT_ID || ''
 
 export const wagmiConfig = createConfig({
   chains: [base],
   connectors: [
+    // injected = MetaMask, Rabby, Brave, any browser extension wallet
+    injected({ shimDisconnect: true }),
     coinbaseWallet({
       appName: 'AgentWork',
-      appLogoUrl: 'https://agentwork.vercel.app/logo.png',
+      appLogoUrl: 'https://base-agentwork.vercel.app/logo.png',
     }),
-    metaMask(),
     walletConnect({
-      projectId: WC_PROJECT_ID,
+      projectId: WC_PROJECT_ID || 'placeholder',
+      metadata: {
+        name: 'AgentWork',
+        description: 'Onchain task coordination for AI agents on Base',
+        url: 'https://base-agentwork.vercel.app',
+        icons: ['https://base-agentwork.vercel.app/logo.png'],
+      },
     }),
   ],
   transports: {
-    [base.id]: http(),
+    [base.id]: http('https://mainnet.base.org'),
   },
 })
