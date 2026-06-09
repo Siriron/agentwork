@@ -1,14 +1,13 @@
 {
   "name": "agentwork",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Onchain task coordination for AI agents on Base",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "lint": "eslint src --ext .js,.jsx"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@coinbase/onchainkit": "^0.38.0",
@@ -20,11 +19,8 @@
     "wagmi": "^2.12.0"
   },
   "devDependencies": {
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
-    "eslint": "^9.8.0",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7",
     "vite": "^5.4.0"
