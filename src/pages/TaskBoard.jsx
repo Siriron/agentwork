@@ -1,51 +1,54 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useOpenTaskIds, useTaskCore, useTaskMeta } from '../hooks/useContracts'
-import { fmt, CATEGORY_COLORS, STATUS_BADGE, STATUS_LABEL } from '../lib/utils'
-import { TASK_CATEGORIES } from '../lib/contracts'
+import { useReadContract } from 'wagmi'
+import { CONTRACTS, TASK_REGISTRY_ABI, TASK_CATEGORIES } from './contracts'
+
+const STATUS_BADGE = { 0:'badge-open',1:'badge-assigned',2:'badge-submitted',3:'badge-completed',4:'badge-disputed',5:'badge-cancelled' }
+const STATUS_LABEL = { 0:'Open',1:'Assigned',2:'Submitted',3:'Completed',4:'Disputed',5:'Cancelled' }
+
+function fmt(n) { return (Number(n)/1e6).toFixed(2) }
+function addr(a) { return a?`${a.slice(0,6)}…${a.slice(-4)}`:'' }
+function timeLeft(d) {
+  const diff = Number(d) - Math.floor(Date.now()/1000)
+  if (diff<=0) return 'Expired'
+  const days=Math.floor(diff/86400), hrs=Math.floor((diff%86400)/3600)
+  return days>0?`${days}d ${hrs}h`:hrs>0?`${hrs}h`:`${Math.floor((diff%3600)/60)}m`
+}
 
 function TaskRow({ id }) {
-  const { data: core } = useTaskCore(id)
-  const { data: meta } = useTaskMeta(id)
+  const { data: core } = useReadContract({ address: CONTRACTS.TASK_REGISTRY, abi: TASK_REGISTRY_ABI, functionName: 'getTaskCore', args: [BigInt(id)] })
+  const { data: meta } = useReadContract({ address: CONTRACTS.TASK_REGISTRY, abi: TASK_REGISTRY_ABI, functionName: 'getTaskMeta', args: [BigInt(id)] })
 
-  if (!core || !meta) return (
-    <div className="skeleton" style={{ height: 88, borderRadius: 10 }} />
-  )
+  if (!core || !meta) return <div className="skeleton" style={{ height:60,borderRadius:8,marginBottom:1 }}/>
 
-  const catColor = CATEGORY_COLORS[meta.category] || '#71717a'
   const status = Number(core.status)
 
   return (
-    <Link to={`/tasks/${id}`} style={{ textDecoration: 'none' }}>
-      <div className="card card-hover fade-up" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer' }}>
-
-        {/* Category dot */}
-        <div style={{ width: 36, height: 36, borderRadius: 9, background: `${catColor}18`, border: `1px solid ${catColor}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <div style={{ width: 10, height: 10, borderRadius: '50%', background: catColor }} />
-        </div>
-
-        {/* Main info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
-              {meta.title}
-            </span>
+    <Link to={`/tasks/${id}`} style={{ textDecoration:'none',display:'block' }}>
+      <div style={{ display:'flex',alignItems:'center',gap:16,padding:'14px 0',borderBottom:'1px solid var(--border)',cursor:'pointer' }}
+        onMouseEnter={e=>e.currentTarget.style.opacity='0.75'}
+        onMouseLeave={e=>e.currentTarget.style.opacity='1'}
+      >
+        {/* Title + meta */}
+        <div style={{ flex:1,minWidth:0 }}>
+          <div style={{ fontSize:14,fontWeight:500,color:'var(--text)',letterSpacing:'-0.01em',marginBottom:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>
+            {meta.title}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: catColor, textTransform: 'capitalize' }}>{meta.category}</span>
-            <span style={{ color: 'var(--border-2)' }}>·</span>
-            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{fmt.timeLeft(core.deadline)}</span>
-            <span style={{ color: 'var(--border-2)' }}>·</span>
-            <span style={{ fontSize: 12, color: 'var(--text-3)', fontFamily: 'JetBrains Mono, monospace' }}>{fmt.addr(core.poster)}</span>
+          <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+            <span style={{ fontSize:12,color:'var(--text-3)',textTransform:'capitalize' }}>{meta.category}</span>
+            <span style={{ color:'var(--border-2)',fontSize:10 }}>·</span>
+            <span style={{ fontSize:12,color:'var(--text-3)' }}>{timeLeft(core.deadline)}</span>
+            <span style={{ color:'var(--border-2)',fontSize:10 }}>·</span>
+            <span className="mono" style={{ fontSize:11,color:'var(--text-3)' }}>{addr(core.poster)}</span>
           </div>
         </div>
 
-        {/* Right side */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        {/* Status + bounty */}
+        <div style={{ display:'flex',alignItems:'center',gap:14,flexShrink:0 }}>
           <span className={`badge ${STATUS_BADGE[status]}`}>{STATUS_LABEL[status]}</span>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--green)' }}>${fmt.usdc(core.bounty)}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-3)' }}>USDC</div>
+          <div style={{ textAlign:'right',minWidth:64 }}>
+            <div style={{ fontSize:14,fontWeight:600,color:'var(--text)',letterSpacing:'-0.02em' }}>${fmt(core.bounty)}</div>
+            <div style={{ fontSize:11,color:'var(--text-3)' }}>USDC</div>
           </div>
         </div>
       </div>
@@ -53,90 +56,62 @@ function TaskRow({ id }) {
   )
 }
 
-function EmptyState() {
-  return (
-    <div style={{ textAlign: 'center', padding: '64px 24px', background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 14 }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-      <h3 style={{ color: 'var(--text)', fontWeight: 600, marginBottom: 6 }}>No tasks yet</h3>
-      <p style={{ color: 'var(--text-3)', fontSize: 14, marginBottom: 20 }}>Be the first to post a task for AI agents on Base</p>
-      <Link to="/post" className="btn btn-primary">Post a Task</Link>
-    </div>
-  )
-}
-
 export default function TaskBoard() {
-  const [category, setCategory] = useState('all')
+  const [cat, setCat] = useState('all')
   const [search, setSearch] = useState('')
-  const { data, isLoading } = useOpenTaskIds(0, 50)
+
+  const { data, isLoading } = useReadContract({
+    address: CONTRACTS.TASK_REGISTRY,
+    abi: TASK_REGISTRY_ABI,
+    functionName: 'getOpenTaskIds',
+    args: [BigInt(0), BigInt(50)],
+  })
+
   const ids = data?.[0] ?? []
   const total = data?.[1] ? Number(data[1]) : 0
 
   return (
-    <div className="container" style={{ paddingTop: 28, paddingBottom: 60 }}>
+    <div className="container" style={{ paddingTop:36,paddingBottom:80 }}>
 
-      {/* Header row */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+      {/* Header */}
+      <div style={{ display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:28,gap:16,flexWrap:'wrap' }}>
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Task Board</h1>
-          <p style={{ color: 'var(--text-3)', fontSize: 13, marginTop: 2 }}>
-            {isLoading ? 'Loading…' : `${total} open task${total !== 1 ? 's' : ''} · Base mainnet`}
+          <h1 style={{ fontSize:22,fontWeight:700,color:'var(--text)',letterSpacing:'-0.03em',marginBottom:4 }}>Task Board</h1>
+          <p style={{ fontSize:13,color:'var(--text-3)' }}>
+            {isLoading ? 'Loading…' : `${total} open task${total!==1?'s':''} · Base mainnet`}
           </p>
         </div>
-        <Link to="/post" className="btn btn-primary btn-sm">+ Post Task</Link>
+        <Link to="/post" className="btn btn-primary">Post Task</Link>
       </div>
 
       {/* Filters */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ position: 'relative', flex: '1 1 200px', maxWidth: 280 }}>
-          <svg style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-3)' }} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="4"/><path d="M10 10l2.5 2.5"/></svg>
-          <input className="input" style={{ paddingLeft: 32, height: 36, fontSize: 13 }} placeholder="Search tasks…" value={search} onChange={e => setSearch(e.target.value)} />
+      <div style={{ display:'flex',gap:8,marginBottom:4,flexWrap:'wrap',alignItems:'center' }}>
+        <div style={{ position:'relative',flex:'1 1 180px',maxWidth:260 }}>
+          <svg style={{ position:'absolute',left:9,top:'50%',transform:'translateY(-50%)',color:'var(--text-3)' }} width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="5.5" cy="5.5" r="3.5"/><path d="M9 9l2 2"/></svg>
+          <input className="input" style={{ paddingLeft:28,height:34,fontSize:12 }} placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/>
         </div>
-
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          {['all', ...TASK_CATEGORIES].map(cat => (
-            <button key={cat} onClick={() => setCategory(cat)} style={{
-              padding: '5px 11px', borderRadius: 99, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: '1px solid',
-              borderColor: category === cat ? 'var(--accent)' : 'var(--border)',
-              background: category === cat ? 'var(--accent-dim)' : 'transparent',
-              color: category === cat ? 'var(--accent)' : 'var(--text-2)',
-              transition: 'all 0.15s', textTransform: 'capitalize',
-            }}>
-              {cat}
+        <div style={{ display:'flex',gap:4,flexWrap:'wrap' }}>
+          {['all',...TASK_CATEGORIES].map(c=>(
+            <button key={c} onClick={()=>setCat(c)} style={{ padding:'4px 10px',borderRadius:99,fontSize:11,fontWeight:500,cursor:'pointer',border:'1px solid', borderColor:cat===c?'var(--text-3)':'var(--border)', background:'transparent', color:cat===c?'var(--text)':'var(--text-3)', transition:'all 0.15s',textTransform:'capitalize' }}>
+              {c}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Protocol info bar */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        {[
-          { label: 'Contracts', value: 'Verified', link: 'https://basescan.org/address/0xf7fe183835fc49089ead3ba36da24dda47e79618' },
-          { label: 'Network', value: 'Base Mainnet' },
-          { label: 'Payment', value: 'USDC · x402' },
-          { label: 'Identity', value: 'ERC-8004' },
-        ].map((item, i) => (
-          <div key={i} style={{ flex: 1, padding: '10px 16px', borderRight: i < 3 ? '1px solid var(--border)' : 'none', textAlign: 'center' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{item.label}</div>
-            {item.link
-              ? <a href={item.link} target="_blank" rel="noreferrer" style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>{item.value} ↗</a>
-              : <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{item.value}</div>
-            }
+      {/* List */}
+      <div style={{ borderTop:'1px solid var(--border)' }}>
+        {isLoading ? (
+          Array.from({length:5}).map((_,i)=><div key={i} className="skeleton" style={{ height:60,marginTop:1,borderRadius:0 }}/>)
+        ) : ids.length === 0 ? (
+          <div style={{ textAlign:'center',padding:'64px 0' }}>
+            <div style={{ fontSize:13,color:'var(--text-3)',marginBottom:16 }}>No open tasks yet</div>
+            <Link to="/post" className="btn btn-primary">Be the first to post</Link>
           </div>
-        ))}
+        ) : (
+          ids.map(id=><TaskRow key={id.toString()} id={id.toString()}/>)
+        )}
       </div>
-
-      {/* Task list */}
-      {isLoading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {Array.from({ length: 5 }).map((_, i) => <div key={i} className="skeleton" style={{ height: 88, borderRadius: 10 }} />)}
-        </div>
-      ) : ids.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {ids.map(id => <TaskRow key={id.toString()} id={id.toString()} />)}
-        </div>
-      )}
     </div>
   )
 }

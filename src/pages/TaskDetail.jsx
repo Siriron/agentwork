@@ -1,22 +1,41 @@
 import { useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { useAccount } from 'wagmi'
-import { useTaskCore, useTaskMeta, useTaskBids, useBidOnTask, useAssignTask, useSubmitWork, useAttestCompletion, useCancelTask, useDisputeTask } from '../hooks/useContracts'
-import { fmt, CATEGORY_COLORS, STATUS_BADGE, STATUS_LABEL } from '../lib/utils'
+import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { parseUnits } from 'viem'
+import { CONTRACTS, TASK_REGISTRY_ABI } from './contracts'
 
-function TxButton({ label, loadingLabel, onClick, disabled, variant = 'primary' }) {
-  return (
-    <button className={`btn btn-${variant} btn-full`} onClick={onClick} disabled={disabled}>
-      {disabled ? loadingLabel : label}
-    </button>
-  )
+const STATUS_BADGE = { 0:'badge-open',1:'badge-assigned',2:'badge-submitted',3:'badge-completed',4:'badge-disputed',5:'badge-cancelled' }
+const STATUS_LABEL = { 0:'Open',1:'Assigned',2:'Submitted',3:'Completed',4:'Disputed',5:'Cancelled' }
+
+function fmt(n) { return (Number(n)/1e6).toFixed(2) }
+function addr(a) { return a?`${a.slice(0,6)}…${a.slice(-4)}`:'' }
+function timeAgo(ts) {
+  const s = Math.floor(Date.now()/1000)-Number(ts)
+  if(s<60) return 'just now'
+  if(s<3600) return `${Math.floor(s/60)}m ago`
+  if(s<86400) return `${Math.floor(s/3600)}h ago`
+  return `${Math.floor(s/86400)}d ago`
+}
+function timeLeft(d) {
+  const diff=Number(d)-Math.floor(Date.now()/1000)
+  if(diff<=0) return 'Expired'
+  const days=Math.floor(diff/86400),hrs=Math.floor((diff%86400)/3600)
+  return days>0?`${days}d ${hrs}h left`:hrs>0?`${hrs}h left`:`${Math.floor((diff%3600)/60)}m left`
 }
 
-function Section({ title, children }) {
+function useWrite(fn) {
+  const { writeContract, data: hash, isPending, error } = useWriteContract()
+  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash })
+  const exec = (args) => writeContract({ address: CONTRACTS.TASK_REGISTRY, abi: TASK_REGISTRY_ABI, functionName: fn, args })
+  return { exec, isPending, confirming, isSuccess, error }
+}
+
+function Row({ label, value }) {
   return (
-    <div className="card" style={{ marginBottom: 12 }}>
-      {title && <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 14 }}>{title}</div>}
-      {children}
+    <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:'1px solid var(--border)' }}>
+      <span style={{ fontSize:13,color:'var(--text-3)' }}>{label}</span>
+      <span style={{ fontSize:13,fontWeight:500,color:'var(--text)' }}>{value}</span>
     </div>
   )
 }
@@ -24,94 +43,82 @@ function Section({ title, children }) {
 export default function TaskDetail() {
   const { id } = useParams()
   const { address } = useAccount()
-  const navigate = useNavigate()
 
-  const { data: core, isLoading: coreLoading, refetch: refetchCore } = useTaskCore(id)
-  const { data: meta, isLoading: metaLoading } = useTaskMeta(id)
-  const { data: bids = [], refetch: refetchBids } = useTaskBids(id)
+  const { data: core, isLoading } = useReadContract({ address:CONTRACTS.TASK_REGISTRY,abi:TASK_REGISTRY_ABI,functionName:'getTaskCore',args:[BigInt(id||0)],query:{enabled:!!id} })
+  const { data: meta } = useReadContract({ address:CONTRACTS.TASK_REGISTRY,abi:TASK_REGISTRY_ABI,functionName:'getTaskMeta',args:[BigInt(id||0)],query:{enabled:!!id} })
+  const { data: bids=[] } = useReadContract({ address:CONTRACTS.TASK_REGISTRY,abi:TASK_REGISTRY_ABI,functionName:'getTaskBids',args:[BigInt(id||0)],query:{enabled:!!id} })
 
   const [proposal, setProposal] = useState('')
   const [deliverable, setDeliverable] = useState('')
   const [rating, setRating] = useState(5)
 
-  const { bid, isPending: bidPending, isConfirming: bidConfirm, isSuccess: bidOk } = useBidOnTask()
-  const { assign, isPending: assignPending } = useAssignTask()
-  const { submit, isPending: submitPending } = useSubmitWork()
-  const { attest, isPending: attestPending, isSuccess: attestOk } = useAttestCompletion()
-  const { cancel, isPending: cancelPending } = useCancelTask()
-  const { dispute, isPending: disputePending } = useDisputeTask()
+  const bidW     = useWrite('bidOnTask')
+  const assignW  = useWrite('assignTask')
+  const submitW  = useWrite('submitWork')
+  const attestW  = useWrite('attestCompletion')
+  const cancelW  = useWrite('cancelTask')
+  const disputeW = useWrite('disputeTask')
 
-  if (coreLoading || metaLoading) return (
-    <div className="container" style={{ paddingTop: 32 }}>
-      <div className="skeleton" style={{ height: 300, borderRadius: 14 }} />
+  if (isLoading) return <div className="container" style={{ paddingTop:40 }}><div className="skeleton" style={{ height:280,borderRadius:12 }}/></div>
+  if (!core || core.id===BigInt(0)) return (
+    <div className="container" style={{ paddingTop:60,textAlign:'center' }}>
+      <p style={{ color:'var(--text-3)',marginBottom:16 }}>Task not found</p>
+      <Link to="/tasks" className="btn btn-secondary btn-sm">← Back</Link>
     </div>
   )
 
-  if (!core || core.id === BigInt(0)) return (
-    <div className="container" style={{ paddingTop: 60, textAlign: 'center' }}>
-      <h2 style={{ color: 'var(--text)' }}>Task not found</h2>
-      <Link to="/" style={{ color: 'var(--accent)', marginTop: 12, display: 'inline-block' }}>← Back to board</Link>
-    </div>
-  )
-
-  const status = Number(core.status)
-  const isPoster = address?.toLowerCase() === core.poster?.toLowerCase()
-  const isAgent = address?.toLowerCase() === core.assignedAgent?.toLowerCase()
-  const hasBid = bids.some(b => b.agent?.toLowerCase() === address?.toLowerCase())
-  const catColor = CATEGORY_COLORS[meta?.category] || '#71717a'
+  const status   = Number(core.status)
+  const isPoster = address?.toLowerCase()===core.poster?.toLowerCase()
+  const isAgent  = address?.toLowerCase()===core.assignedAgent?.toLowerCase()
+  const hasBid   = bids.some(b=>b.agent?.toLowerCase()===address?.toLowerCase())
 
   return (
-    <div className="container" style={{ paddingTop: 24, paddingBottom: 60 }}>
+    <div className="container" style={{ paddingTop:28,paddingBottom:80 }}>
+      <Link to="/tasks" style={{ fontSize:13,color:'var(--text-3)',textDecoration:'none',display:'inline-block',marginBottom:24 }}>← Tasks</Link>
 
-      {/* Back */}
-      <Link to="/" style={{ color: 'var(--text-3)', fontSize: 13, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 20 }}>
-        ← Back to Board
-      </Link>
+      <div style={{ display:'grid',gridTemplateColumns:'1fr 280px',gap:24,alignItems:'start' }}>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 16, alignItems: 'start' }}>
-
-        {/* Left column */}
+        {/* Left */}
         <div>
-          {/* Task header */}
-          <Section>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Header */}
+          <div style={{ marginBottom:24 }}>
+            <div style={{ display:'flex',gap:8,alignItems:'center',marginBottom:12,flexWrap:'wrap' }}>
               <span className={`badge ${STATUS_BADGE[status]}`}>{STATUS_LABEL[status]}</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: catColor, textTransform: 'capitalize' }}>{meta?.category}</span>
-              <span style={{ fontSize: 12, color: 'var(--text-3)', fontFamily: 'JetBrains Mono, monospace' }}>#{id}</span>
+              <span style={{ fontSize:12,color:'var(--text-3)',textTransform:'capitalize' }}>{meta?.category}</span>
+              <span className="mono" style={{ fontSize:11,color:'var(--text-3)' }}>#{id}</span>
             </div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px', marginBottom: 12 }}>
-              {meta?.title}
-            </h1>
-            <p style={{ color: 'var(--text-2)', fontSize: 14, lineHeight: 1.7 }}>{meta?.description}</p>
-
+            <h1 style={{ fontSize:'clamp(18px,2.5vw,24px)',fontWeight:700,color:'var(--text)',letterSpacing:'-0.03em',marginBottom:14 }}>{meta?.title}</h1>
+            <p style={{ fontSize:14,color:'var(--text-2)',lineHeight:1.75 }}>{meta?.description}</p>
             {meta?.deliverableHash && (
-              <div style={{ marginTop: 14, padding: '10px 14px', background: 'var(--bg-3)', borderRadius: 8, border: '1px solid var(--border)', fontSize: 12, fontFamily: 'JetBrains Mono, monospace', color: 'var(--accent)', wordBreak: 'break-all' }}>
-                📦 {meta.deliverableHash}
+              <div className="mono" style={{ marginTop:14,padding:'10px 14px',background:'var(--bg-2)',border:'1px solid var(--border)',borderRadius:8,fontSize:12,color:'var(--text-2)',wordBreak:'break-all' }}>
+                Deliverable: {meta.deliverableHash}
               </div>
             )}
-          </Section>
+          </div>
+
+          <div className="divider" style={{ marginBottom:24 }}/>
 
           {/* Bids */}
-          <Section title={`Bids (${bids.length})`}>
-            {bids.length === 0 ? (
-              <p style={{ color: 'var(--text-3)', fontSize: 14 }}>No bids yet.</p>
+          <div style={{ marginBottom:24 }}>
+            <h2 style={{ fontSize:14,fontWeight:600,color:'var(--text)',marginBottom:14,letterSpacing:'-0.01em' }}>Bids ({bids.length})</h2>
+
+            {bids.length===0 ? (
+              <p style={{ fontSize:13,color:'var(--text-3)' }}>No bids yet.</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {bids.map((b, i) => (
-                  <div key={i} style={{ padding: '14px 16px', background: 'var(--bg)', border: `1px solid ${b.selected ? 'var(--green)' : 'var(--border)'}`, borderRadius: 10 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Link to={`/agent/${b.agent}`} style={{ color: 'var(--accent)', fontFamily: 'JetBrains Mono, monospace', fontSize: 13, textDecoration: 'none' }}>
-                          {fmt.addr(b.agent)}
-                        </Link>
-                        {b.selected && <span className="badge badge-open" style={{ fontSize: 10 }}>Selected</span>}
+              <div style={{ display:'flex',flexDirection:'column',gap:8 }}>
+                {bids.map((b,i)=>(
+                  <div key={i} style={{ padding:'14px 16px',background:'var(--bg-2)',border:`1px solid ${b.selected?'var(--green)':'var(--border)'}`,borderRadius:8 }}>
+                    <div style={{ display:'flex',justifyContent:'space-between',marginBottom:6,flexWrap:'wrap',gap:6 }}>
+                      <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+                        <Link to={`/agent/${b.agent}`} className="mono" style={{ fontSize:12,color:'var(--text-2)',textDecoration:'none' }}>{addr(b.agent)}</Link>
+                        {b.selected && <span className="badge badge-open" style={{ fontSize:10 }}>Assigned</span>}
                       </div>
-                      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{fmt.timeAgo(b.bidAt)}</span>
+                      <span style={{ fontSize:12,color:'var(--text-3)' }}>{timeAgo(b.bidAt)}</span>
                     </div>
-                    <p style={{ color: 'var(--text-2)', fontSize: 13, lineHeight: 1.6 }}>{b.proposal}</p>
-                    {isPoster && status === 0 && !b.selected && (
-                      <button className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} onClick={() => assign({ taskId: id, bidIndex: i })} disabled={assignPending}>
-                        {assignPending ? 'Assigning…' : 'Assign Agent'}
+                    <p style={{ fontSize:13,color:'var(--text-2)',lineHeight:1.65 }}>{b.proposal}</p>
+                    {isPoster && status===0 && !b.selected && (
+                      <button className="btn btn-secondary btn-sm" style={{ marginTop:10 }} onClick={()=>assignW.exec([BigInt(id),BigInt(i)])} disabled={assignW.isPending||assignW.confirming}>
+                        {assignW.isPending||assignW.confirming ? 'Assigning…' : 'Assign'}
                       </button>
                     )}
                   </div>
@@ -120,118 +127,103 @@ export default function TaskDetail() {
             )}
 
             {/* Submit bid */}
-            {status === 0 && !isPoster && !hasBid && address && (
-              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 10 }}>Submit Your Bid</div>
-                <textarea className="input" placeholder="Describe your approach, timeline, relevant experience…" value={proposal} onChange={e => setProposal(e.target.value)} rows={4} style={{ marginBottom: 10, resize: 'vertical' }} />
-                <button className="btn btn-primary" onClick={() => bid({ taskId: id, proposal })} disabled={!proposal.trim() || bidPending || bidConfirm}>
-                  {bidPending ? 'Confirm in wallet…' : bidConfirm ? 'Submitting…' : bidOk ? '✓ Bid submitted' : 'Submit Bid'}
+            {status===0 && !isPoster && !hasBid && address && (
+              <div style={{ marginTop:20,paddingTop:20,borderTop:'1px solid var(--border)' }}>
+                <h3 style={{ fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:10 }}>Submit a bid</h3>
+                <textarea className="input" placeholder="Describe your approach and timeline…" value={proposal} onChange={e=>setProposal(e.target.value)} rows={4} style={{ marginBottom:10,resize:'vertical' }}/>
+                <button className="btn btn-primary" onClick={()=>bidW.exec([BigInt(id),proposal])} disabled={!proposal.trim()||bidW.isPending||bidW.confirming}>
+                  {bidW.isPending ? 'Confirm…' : bidW.confirming ? 'Submitting…' : bidW.isSuccess ? '✓ Bid submitted' : 'Submit bid'}
                 </button>
               </div>
             )}
-
-            {status === 0 && !address && (
-              <p style={{ color: 'var(--text-3)', fontSize: 13, marginTop: 12 }}>Connect your wallet to bid on this task.</p>
+            {status===0 && !address && (
+              <p style={{ fontSize:13,color:'var(--text-3)',marginTop:14 }}>Connect your wallet to bid.</p>
             )}
-          </Section>
+          </div>
 
           {/* Agent: submit work */}
-          {isAgent && status === 1 && (
-            <Section title="Submit Deliverable">
-              <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 12 }}>Upload your work to IPFS and paste the hash below.</p>
-              <input className="input" placeholder="ipfs://Qm… or bafybe…" value={deliverable} onChange={e => setDeliverable(e.target.value)} style={{ marginBottom: 10 }} />
-              <button className="btn btn-primary btn-full" onClick={() => submit({ taskId: id, deliverableHash: deliverable })} disabled={!deliverable.trim() || submitPending}>
-                {submitPending ? 'Submitting…' : 'Submit Work'}
+          {isAgent && status===1 && (
+            <div style={{ paddingTop:20,borderTop:'1px solid var(--border)' }}>
+              <h3 style={{ fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:6 }}>Submit deliverable</h3>
+              <p style={{ fontSize:13,color:'var(--text-3)',marginBottom:12 }}>Upload to IPFS and paste the hash.</p>
+              <input className="input" placeholder="ipfs://Qm… or bafybe…" value={deliverable} onChange={e=>setDeliverable(e.target.value)} style={{ marginBottom:10 }}/>
+              <button className="btn btn-primary btn-full" onClick={()=>submitW.exec([BigInt(id),deliverable])} disabled={!deliverable.trim()||submitW.isPending||submitW.confirming}>
+                {submitW.isPending ? 'Confirm…' : submitW.confirming ? 'Submitting…' : 'Submit work'}
               </button>
-            </Section>
+            </div>
           )}
 
-          {/* Poster: attest completion */}
-          {isPoster && status === 2 && (
-            <Section title="Review & Release Payment">
-              <p style={{ color: 'var(--text-2)', fontSize: 13, marginBottom: 14 }}>
-                Attesting releases <strong style={{ color: 'var(--green)' }}>${fmt.usdc(core.bounty * BigInt(98) / BigInt(100))} USDC</strong> directly to the agent.
+          {/* Poster: attest */}
+          {isPoster && status===2 && (
+            <div style={{ paddingTop:20,borderTop:'1px solid var(--border)' }}>
+              <h3 style={{ fontSize:13,fontWeight:600,color:'var(--text)',marginBottom:6 }}>Release payment</h3>
+              <p style={{ fontSize:13,color:'var(--text-3)',marginBottom:14 }}>
+                Review the deliverable above. Approving releases <strong style={{ color:'var(--green)' }}>${fmt(core.bounty*BigInt(98)/BigInt(100))} USDC</strong> to the agent.
               </p>
-              <div style={{ marginBottom: 14 }}>
-                <div className="label">Rating</div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {[1,2,3,4,5].map(n => (
-                    <button key={n} onClick={() => setRating(n)} style={{ width: 36, height: 36, borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 16, border: `1.5px solid ${rating >= n ? 'var(--yellow)' : 'var(--border)'}`, background: rating >= n ? 'var(--yellow-dim)' : 'var(--bg)', color: rating >= n ? 'var(--yellow)' : 'var(--text-3)', transition: 'all 0.15s' }}>★</button>
+              <div style={{ marginBottom:14 }}>
+                <div className="label">Rate the agent</div>
+                <div style={{ display:'flex',gap:6 }}>
+                  {[1,2,3,4,5].map(n=>(
+                    <button key={n} onClick={()=>setRating(n)} style={{ width:34,height:34,borderRadius:6,cursor:'pointer',fontWeight:600,fontSize:15, border:`1px solid ${rating>=n?'var(--yellow)':'var(--border)'}`, background:rating>=n?'var(--yellow-dim)':'transparent', color:rating>=n?'var(--yellow)':'var(--text-3)', transition:'all 0.15s' }}>★</button>
                   ))}
                 </div>
               </div>
-              <button className="btn btn-full" style={{ background: 'var(--green)', color: '#fff' }} onClick={() => attest({ taskId: id, rating })} disabled={attestPending}>
-                {attestPending ? 'Releasing…' : attestOk ? '✓ Payment Released' : `Release ${rating}★ · $${fmt.usdc(core.bounty * BigInt(98) / BigInt(100))} USDC`}
+              <button className="btn btn-full" style={{ background:'var(--green)',color:'#fff',fontWeight:600 }} onClick={()=>attestW.exec([BigInt(id),rating])} disabled={attestW.isPending||attestW.confirming}>
+                {attestW.isPending ? 'Confirm…' : attestW.confirming ? 'Releasing…' : attestW.isSuccess ? '✓ Payment released' : `Approve & release $${fmt(core.bounty*BigInt(98)/BigInt(100))}`}
               </button>
-            </Section>
+            </div>
           )}
         </div>
 
-        {/* Right sidebar */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {/* Sidebar */}
+        <div style={{ display:'flex',flexDirection:'column',gap:12 }}>
 
           {/* Bounty */}
-          <div className="card" style={{ textAlign: 'center', padding: '20px 16px' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Bounty</div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: 'var(--green)', letterSpacing: '-1px', lineHeight: 1 }}>${fmt.usdc(core.bounty)}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>USDC · Escrowed on Base</div>
+          <div className="card" style={{ textAlign:'center',padding:'20px 16px' }}>
+            <div style={{ fontSize:11,color:'var(--text-3)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6 }}>Bounty</div>
+            <div style={{ fontSize:30,fontWeight:700,color:'var(--text)',letterSpacing:'-1px',lineHeight:1 }}>${fmt(core.bounty)}</div>
+            <div style={{ fontSize:12,color:'var(--text-3)',marginTop:4 }}>USDC · Escrowed</div>
           </div>
 
           {/* Details */}
-          <div className="card" style={{ padding: '16px 18px' }}>
-            {[
-              { label: 'Deadline', value: fmt.timeLeft(core.deadline) },
-              { label: 'Posted', value: fmt.timeAgo(core.createdAt) },
-              { label: 'Bids', value: bids.length },
-              { label: 'Status', value: STATUS_LABEL[status] },
-            ].map((r, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: i < 3 ? '1px solid var(--border)' : 'none' }}>
-                <span style={{ color: 'var(--text-3)', fontSize: 13 }}>{r.label}</span>
-                <span style={{ color: 'var(--text)', fontSize: 13, fontWeight: 500 }}>{r.value}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Poster */}
-          <div className="card" style={{ padding: '14px 18px' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Posted by</div>
-            <Link to={`/agent/${core.poster}`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--accent-dim)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>◈</div>
-              <span style={{ color: 'var(--accent)', fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>{fmt.addr(core.poster)}</span>
-            </Link>
+          <div className="card" style={{ padding:'16px 18px' }}>
+            <Row label="Status" value={STATUS_LABEL[status]}/>
+            <Row label="Deadline" value={timeLeft(core.deadline)}/>
+            <Row label="Posted" value={timeAgo(core.createdAt)}/>
+            <Row label="Bids" value={bids.length}/>
+            <div style={{ paddingTop:10 }}>
+              <div className="label">Posted by</div>
+              <Link to={`/agent/${core.poster}`} className="mono" style={{ fontSize:12,color:'var(--text-2)',textDecoration:'none' }}>{addr(core.poster)}</Link>
+            </div>
           </div>
 
           {/* Links */}
-          <div className="card" style={{ padding: '14px 18px' }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>On-chain</div>
-            <a href={`https://basescan.org/address/0xf7fe183835fc49089ead3ba36da24dda47e79618`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 13, textDecoration: 'none', display: 'block', marginBottom: 6 }}>
-              View Contract ↗
+          <div className="card" style={{ padding:'14px 18px',display:'flex',flexDirection:'column',gap:8 }}>
+            <a href={`https://basescan.org/address/${CONTRACTS.TASK_REGISTRY}`} target="_blank" rel="noreferrer" style={{ fontSize:13,color:'var(--text-2)',textDecoration:'none' }}
+              onMouseEnter={e=>e.target.style.color='var(--text)'} onMouseLeave={e=>e.target.style.color='var(--text-2)'}>
+              View contract ↗
             </a>
-            <a href={`https://basescan.org/address/${core.poster}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 13, textDecoration: 'none' }}>
-              View Poster ↗
+            <a href={`https://basescan.org/address/${core.poster}`} target="_blank" rel="noreferrer" style={{ fontSize:13,color:'var(--text-2)',textDecoration:'none' }}
+              onMouseEnter={e=>e.target.style.color='var(--text)'} onMouseLeave={e=>e.target.style.color='var(--text-2)'}>
+              View poster ↗
             </a>
           </div>
 
-          {/* Danger actions */}
-          {isPoster && status === 0 && (
-            <button className="btn btn-danger btn-sm btn-full" onClick={() => cancel(id)} disabled={cancelPending}>
-              {cancelPending ? 'Cancelling…' : 'Cancel & Refund'}
+          {/* Danger */}
+          {isPoster && status===0 && (
+            <button className="btn btn-full" style={{ background:'transparent',border:'1px solid var(--border)',color:'var(--red)',fontSize:13 }} onClick={()=>cancelW.exec([BigInt(id)])} disabled={cancelW.isPending||cancelW.confirming}>
+              {cancelW.isPending||cancelW.confirming ? 'Cancelling…' : 'Cancel & refund'}
             </button>
           )}
-          {(isPoster || isAgent) && (status === 1 || status === 2) && (
-            <button className="btn btn-danger btn-sm btn-full" onClick={() => dispute(id)} disabled={disputePending}>
-              {disputePending ? 'Disputing…' : 'Raise Dispute'}
+          {(isPoster||isAgent) && (status===1||status===2) && (
+            <button className="btn btn-full" style={{ background:'transparent',border:'1px solid var(--border)',color:'var(--red)',fontSize:13 }} onClick={()=>disputeW.exec([BigInt(id)])} disabled={disputeW.isPending}>
+              {disputeW.isPending ? 'Disputing…' : 'Raise dispute'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Mobile sidebar stack */}
-      <style>{`
-        @media (max-width: 760px) {
-          .task-grid { grid-template-columns: 1fr !important; }
-        }
-      `}</style>
+      <style>{`@media(max-width:720px){.task-detail-grid{grid-template-columns:1fr!important}}`}</style>
     </div>
   )
 }
