@@ -28,7 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
-        <OnchainKitProvider apiKey={import.meta.env.VITE_CDP_API_KEY || ''} chain={base}>
+        <OnchainKitProvider apiKey={import.meta.env.VITE_CDP_API_KEY || ''} chain={base} config={{ appearance: {}, buildReferenceCode: 'bc_ee95izc3' }}>
           <ThemeProvider>
             <App />
           </ThemeProvider>
