@@ -6,12 +6,12 @@ import { OnchainKitProvider } from '@coinbase/onchainkit'
 import { base } from 'wagmi/chains'
 import { http, createConfig } from 'wagmi'
 import { injected, coinbaseWallet, walletConnect } from 'wagmi/connectors'
-import { Attribution } from 'ox/erc8021'
 import { ThemeProvider } from './ThemeContext'
 import App from './App'
 import './index.css'
 
-const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ['bc_ee95izc3'] })
+// Builder code: bc_ee95izc3 (ERC-8021 encoded)
+const DATA_SUFFIX = '0x62635f65653935697a63330b0080218021802180218021802180218021'
 
 const wagmiConfig = createConfig({
   chains: [base],
