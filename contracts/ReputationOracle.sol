@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+/// @title ReputationOracle
+/// @notice Tracks agent reputation scores from completed and disputed tasks.
+///         Only callable by the TaskRegistry contract.
 contract ReputationOracle {
 
     struct TaskRecord {
         uint256 taskId;
-        uint8 rating;
+        uint8   rating;
         uint256 timestamp;
-        bool disputed;
+        bool    disputed;
     }
 
     struct AgentStats {
@@ -20,60 +23,83 @@ contract ReputationOracle {
 
     address public taskRegistry;
     address public owner;
+    bool    public paused;
 
-    mapping(address => AgentStats) public agentStats;
+    mapping(address => AgentStats)   public agentStats;
     mapping(address => TaskRecord[]) public agentHistory;
 
     event CompletionRecorded(address indexed agent, uint256 indexed taskId, uint8 rating, uint256 newScore);
-    event DisputeRecorded(address indexed agent, uint256 indexed taskId);
+    event DisputeRecorded(address indexed agent, uint256 indexed taskId, uint256 newScore);
+    event RegistryUpdated(address indexed newRegistry);
+    event Paused(bool state);
+
+    modifier onlyOwner() { require(msg.sender == owner, "Not owner"); _; }
+    modifier onlyRegistry() { require(msg.sender == taskRegistry, "Only TaskRegistry"); _; }
+    modifier notPaused() { require(!paused, "Paused"); _; }
 
     constructor(address _taskRegistry) {
         taskRegistry = _taskRegistry;
         owner = msg.sender;
     }
 
-    function setTaskRegistry(address _taskRegistry) external {
-        require(msg.sender == owner, "Not owner");
-        taskRegistry = _taskRegistry;
+    // ── Admin ──────────────────────────────────────────────────────────────────
+
+    function setTaskRegistry(address _registry) external onlyOwner {
+        taskRegistry = _registry;
+        emit RegistryUpdated(_registry);
     }
 
-    function recordCompletion(address agent, uint256 taskId, uint8 rating) external {
-        require(msg.sender == taskRegistry, "Only TaskRegistry");
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit Paused(_paused);
+    }
+
+    // ── Called by TaskRegistry ─────────────────────────────────────────────────
+
+    function recordCompletion(address agent, uint256 taskId, uint8 rating) external onlyRegistry notPaused {
         require(rating >= 1 && rating <= 5, "Invalid rating");
-        AgentStats storage stats = agentStats[agent];
-        stats.totalCompleted++;
-        stats.ratingSum += rating;
-        stats.lastActive = block.timestamp;
-        uint256 avgRating = (stats.ratingSum * 100) / stats.totalCompleted;
-        uint256 qualityScore = (avgRating * 800) / 500;
-        uint256 volumeBonus = stats.totalCompleted > 50 ? 200 : stats.totalCompleted * 4;
-        stats.score = qualityScore + volumeBonus;
+
+        AgentStats storage s = agentStats[agent];
+        s.totalCompleted++;
+        s.ratingSum   += rating;
+        s.lastActive   = block.timestamp;
+
+        // Score formula: quality (0-800) + volume bonus (0-200) = max 1000
+        uint256 avgRating   = (s.ratingSum * 100) / s.totalCompleted;     // scaled x100
+        uint256 qualScore   = (avgRating * 800) / 500;                     // 500 = perfect avg*100
+        uint256 volBonus    = s.totalCompleted >= 50 ? 200 : s.totalCompleted * 4;
+        // Dispute penalty applied on top
+        uint256 penalty     = s.totalDisputed * 50;
+        s.score             = qualScore + volBonus > penalty ? qualScore + volBonus - penalty : 0;
+
         agentHistory[agent].push(TaskRecord({
-            taskId: taskId,
-            rating: rating,
+            taskId:    taskId,
+            rating:    rating,
             timestamp: block.timestamp,
-            disputed: false
+            disputed:  false
         }));
-        emit CompletionRecorded(agent, taskId, rating, stats.score);
+
+        emit CompletionRecorded(agent, taskId, rating, s.score);
     }
 
-    function recordDispute(address agent, uint256 taskId) external {
+    function recordDispute(address agent, uint256 taskId) external notPaused {
         require(msg.sender == taskRegistry || msg.sender == owner, "Not authorized");
-        AgentStats storage stats = agentStats[agent];
-        stats.totalDisputed++;
-        if (stats.score >= 50) {
-            stats.score -= 50;
-        } else {
-            stats.score = 0;
-        }
+
+        AgentStats storage s = agentStats[agent];
+        s.totalDisputed++;
+        s.score = s.score >= 50 ? s.score - 50 : 0;
+
         agentHistory[agent].push(TaskRecord({
-            taskId: taskId,
-            rating: 0,
+            taskId:    taskId,
+            rating:    0,
             timestamp: block.timestamp,
-            disputed: true
+            disputed:  true
         }));
-        emit DisputeRecorded(agent, taskId);
+
+        emit DisputeRecorded(agent, taskId, s.score);
     }
+
+    // ── Views ──────────────────────────────────────────────────────────────────
 
     function getScore(address agent) external view returns (uint256) {
         return agentStats[agent].score;
@@ -88,12 +114,32 @@ contract ReputationOracle {
     }
 
     function getAgentRank(address agent) external view returns (
-        uint256 score,
-        uint256 completed,
-        uint256 disputed,
-        uint256 lastActive
+        uint256 score, uint256 completed, uint256 disputed, uint256 avgRating, uint256 lastActive
     ) {
         AgentStats memory s = agentStats[agent];
-        return (s.score, s.totalCompleted, s.totalDisputed, s.lastActive);
+        uint256 avg = s.totalCompleted > 0 ? (s.ratingSum * 100) / s.totalCompleted : 0;
+        return (s.score, s.totalCompleted, s.totalDisputed, avg, s.lastActive);
+    }
+
+    /// @notice Returns top agents by score. Max 50 returned.
+    function getLeaderboard(address[] calldata agents) external view returns (
+        address[] memory sorted, uint256[] memory scores
+    ) {
+        uint256 len = agents.length > 50 ? 50 : agents.length;
+        sorted = new address[](len);
+        scores = new uint256[](len);
+        for (uint256 i = 0; i < len; i++) {
+            sorted[i] = agents[i];
+            scores[i] = agentStats[agents[i]].score;
+        }
+        // Bubble sort (small N only — called off-chain)
+        for (uint256 i = 0; i < len; i++) {
+            for (uint256 j = i + 1; j < len; j++) {
+                if (scores[j] > scores[i]) {
+                    (scores[i], scores[j]) = (scores[j], scores[i]);
+                    (sorted[i], sorted[j]) = (sorted[j], sorted[i]);
+                }
+            }
+        }
     }
 }
