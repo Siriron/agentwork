@@ -189,6 +189,7 @@ export function PostTask() {
         functionName: 'postTaskETH',
         args: [form.title, form.description, form.category, deadline],
         value: bountyWei,
+        gas: 500_000n,
       })
     } else {
       writePost({
@@ -196,6 +197,7 @@ export function PostTask() {
         abi: TASK_REGISTRY_ABI,
         functionName: 'postTask',
         args: [form.title, form.description, form.category, form.token, bountyWei, deadline],
+        gas: 500_000n,
       })
     }
   }

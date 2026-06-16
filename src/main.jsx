@@ -26,8 +26,14 @@ const wagmiConfig = createConfig({
     }),
   ],
   transports: {
-    [base.id]:        http('https://mainnet.base.org'),
-    [baseSepolia.id]: http('https://sepolia.base.org'),
+    [base.id]: http(
+      import.meta.env.VITE_BASE_RPC || 'https://base-rpc.publicnode.com',
+      { batch: true }
+    ),
+    [baseSepolia.id]: http(
+      import.meta.env.VITE_BASE_SEPOLIA_RPC || 'https://base-sepolia-rpc.publicnode.com',
+      { batch: true }
+    ),
   },
   dataSuffix: DATA_SUFFIX,
 })

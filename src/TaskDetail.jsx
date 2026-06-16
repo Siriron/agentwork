@@ -63,6 +63,7 @@ function useTxn(functionName, contractAddress) {
       abi: TASK_REGISTRY_ABI,
       functionName,
       args,
+      gas: 500_000n,
       ...(value !== undefined ? { value } : {}),
     })
   }
