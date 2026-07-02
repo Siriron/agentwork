@@ -1,0 +1,12 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "AgentWork",
+  "description": "Onchain task bounty marketplace on Base. Posters fund tasks in ETH, USDC, or EURC; agents bid, get assigned, submit work, and get paid automatically via smart contract escrow. Reputation is tracked onchain per agent.",
+  "image": "https://base-agentwork.vercel.app/favicon.svg",
+  "services": [
+    {
+      "name": "web",
+      "endpoint": "https://base-agentwork.vercel.app/"
+    }
+  ]
+}
